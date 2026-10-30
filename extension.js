@@ -3,6 +3,11 @@ const path = require('path');
 const fs = require('fs');
 
 const HINTS_FILE = '.claude-hints.json';
+// Claude cannot see VS Code settings, so the difficulty is mirrored here for it
+// to read before repeating hints in chat.
+const LEVEL_FILE = '.claude-hints-level.json';
+// How many tiers CLAUDE.md asks Claude to write per hint.
+const TIERS_WRITTEN = 5;
 
 // Claude writes each hint as five tiers, least to most help. Difficulty picks
 // which tier is shown; Expert shows none, only the highlighted line.
@@ -70,14 +75,42 @@ function setDifficulty(value) {
   return vscode.workspace.getConfiguration('claudeHints').update('difficulty', value, vscode.ConfigurationTarget.Global);
 }
 
-function textFor(hint) {
-  const difficulty = getDifficulty();
-  if (difficulty === DIFFICULTIES.length || hint.tiers.length === 0) return '';
+// Returns -1 when no tier should be shown.
+function tierIndex(difficulty, tierCount) {
+  if (difficulty === DIFFICULTIES.length || tierCount === 0) return -1;
   // Scale rather than index, so hints written with fewer tiers still spread
   // across the whole slider.
   const help = (DIFFICULTIES.length - 1 - difficulty) / (DIFFICULTIES.length - 2);
-  const index = Math.round(help * (hint.tiers.length - 1));
-  return hint.tiers[index];
+  return Math.round(help * (tierCount - 1));
+}
+
+function textFor(hint) {
+  const index = tierIndex(getDifficulty(), hint.tiers.length);
+  return index === -1 ? '' : hint.tiers[index];
+}
+
+// Only folders that already use Claude Hints get the file, so other projects
+// are left alone.
+function writeLevel() {
+  const difficulty = getDifficulty();
+  const index = tierIndex(difficulty, TIERS_WRITTEN);
+  const level = {
+    difficulty: DIFFICULTIES.find((d) => d.value === difficulty).label,
+    hint: index === -1 ? null : index + 1,
+  };
+  const text = JSON.stringify(level, null, 2) + '\n';
+  for (const folder of vscode.workspace.workspaceFolders || []) {
+    if (!fs.existsSync(path.join(folder.uri.fsPath, HINTS_FILE))) continue;
+    const levelPath = path.join(folder.uri.fsPath, LEVEL_FILE);
+    try {
+      if (fs.readFileSync(levelPath, 'utf8') === text) continue;
+    } catch {
+    }
+    try {
+      fs.writeFileSync(levelPath, text);
+    } catch {
+    }
+  }
 }
 
 function clampRange(doc, hint) {
@@ -117,6 +150,7 @@ function render() {
 function refresh() {
   hints = readHints();
   render();
+  writeLevel();
 }
 
 // Hints are line numbers from when Claude wrote them. Shift them as the user
@@ -303,6 +337,7 @@ function activate(context) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration('claudeHints.difficulty')) return;
       render();
+      writeLevel();
       difficultyView.sync();
     }),
     vscode.window.onDidChangeVisibleTextEditors(render),
