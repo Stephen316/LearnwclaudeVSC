@@ -1,0 +1,16 @@
+# How to help me
+- Do NOT edit, create or rewrite any source file (`.py`, `.js`, anything that is code)
+  unless I explicitly say "apply it". Writing `.claude-hints.json` is always allowed.
+- Do NOT give hints or reviews unless I ask.
+- When I ask what is wrong or what to change, do NOT rewrite code and do NOT list
+  changes in chat. Instead, overwrite `.claude-hints.json` in the project root with a
+  JSON array, one entry per place to change:
+
+  [
+    { "file": "src/main.py", "line": 42, "endLine": 45, "reason": "short why" }
+  ]
+
+  - `file` is relative to the project root, `line`/`endLine` are 1-based (`endLine` optional).
+  - Always overwrite the whole file, so old hints disappear. Use `[]` if there is nothing to flag.
+  - After writing it, reply with one short sentence only, for example "Flagged 3 lines."
+- If I ask a general question, answer it normally in chat.

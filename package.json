@@ -1,0 +1,17 @@
+{
+  "name": "claude-hints",
+  "displayName": "Claude Hints",
+  "description": "Highlights lines of code that Claude flagged in .claude-hints.json. Silent until Claude writes hints.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "claudeHints.list", "title": "Claude Hints: Show All Hints" },
+      { "command": "claudeHints.clear", "title": "Claude Hints: Clear All Hints" }
+    ]
+  }
+}
