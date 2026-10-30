@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const HINTS_FILE = '.claude-hints.json';
 // Claude cannot see VS Code settings, so the difficulty is mirrored here for it
@@ -26,10 +27,19 @@ let diagnostics;
 let hints = [];
 const watchers = new Map();
 
+// Files opened without a folder have no project root to hold a hints file, so
+// Claude writes theirs to the home folder instead.
+function hintRoots() {
+  const roots = (vscode.workspace.workspaceFolders || []).map((folder) => folder.uri.fsPath);
+  const home = os.homedir();
+  if (!roots.includes(home)) roots.push(home);
+  return roots;
+}
+
 function readHints() {
   const result = [];
-  for (const folder of vscode.workspace.workspaceFolders || []) {
-    const hintsPath = path.join(folder.uri.fsPath, HINTS_FILE);
+  for (const root of hintRoots()) {
+    const hintsPath = path.join(root, HINTS_FILE);
     let raw;
     try {
       raw = fs.readFileSync(hintsPath, 'utf8');
@@ -46,7 +56,7 @@ function readHints() {
     for (const h of data) {
       if (!h || typeof h.file !== 'string' || !Number.isInteger(h.line) || h.line < 1) continue;
       const end = Number.isInteger(h.endLine) && h.endLine >= h.line ? h.endLine : h.line;
-      const abs = path.isAbsolute(h.file) ? h.file : path.join(folder.uri.fsPath, h.file);
+      const abs = path.isAbsolute(h.file) ? h.file : path.join(root, h.file);
       result.push({
         uri: vscode.Uri.file(abs),
         start: h.line - 1,
@@ -99,9 +109,9 @@ function writeLevel() {
     hint: index === -1 ? null : index + 1,
   };
   const text = JSON.stringify(level, null, 2) + '\n';
-  for (const folder of vscode.workspace.workspaceFolders || []) {
-    if (!fs.existsSync(path.join(folder.uri.fsPath, HINTS_FILE))) continue;
-    const levelPath = path.join(folder.uri.fsPath, LEVEL_FILE);
+  for (const root of hintRoots()) {
+    if (!fs.existsSync(path.join(root, HINTS_FILE))) continue;
+    const levelPath = path.join(root, LEVEL_FILE);
     try {
       if (fs.readFileSync(levelPath, 'utf8') === text) continue;
     } catch {
@@ -304,8 +314,9 @@ function difficultyHtml(webview, difficulty) {
 }
 
 function clearAll() {
-  for (const folder of vscode.workspace.workspaceFolders || []) {
-    const hintsPath = path.join(folder.uri.fsPath, HINTS_FILE);
+  for (const root of hintRoots()) {
+    const hintsPath = path.join(root, HINTS_FILE);
+    if (!fs.existsSync(hintsPath)) continue;
     try {
       fs.writeFileSync(hintsPath, '[]\n');
     } catch {
@@ -352,6 +363,14 @@ function activate(context) {
   for (const folder of vscode.workspace.workspaceFolders || []) {
     watchFolder(folder, context);
   }
+  // Kept out of the watchers map, so removing a workspace folder never stops it.
+  const homeWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(vscode.Uri.file(os.homedir()), HINTS_FILE)
+  );
+  homeWatcher.onDidCreate(refresh);
+  homeWatcher.onDidChange(refresh);
+  homeWatcher.onDidDelete(refresh);
+  context.subscriptions.push(homeWatcher);
 
   refresh();
 }

@@ -13,6 +13,9 @@
   ]
 
   - `file` is relative to the project root, `line`/`endLine` are 1-based (`endLine` optional).
+  - If a file is not inside the project folder (for example a loose file in my home folder),
+    put its entries in `~/.claude-hints.json` instead, with an absolute `file` path, and read
+    `~/.claude-hints-level.json` for the level below.
   - `hints` is always five strings, least help first. My difficulty slider picks which
     one I see, so write all five every time, each clearly giving more than the last:
     1. a vague nudge: a question to ask myself, without pointing at anything specific;
