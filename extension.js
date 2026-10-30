@@ -4,6 +4,18 @@ const fs = require('fs');
 
 const HINTS_FILE = '.claude-hints.json';
 
+// Claude writes each hint as five tiers, least to most help. Difficulty picks
+// which tier is shown; Expert shows none, only the highlighted line.
+const DIFFICULTIES = [
+  { value: 1, label: 'Very easy', detail: 'What is wrong and the direction of the fix' },
+  { value: 2, label: 'Easy', detail: 'What is wrong and why' },
+  { value: 3, label: 'Medium', detail: 'Names the problem' },
+  { value: 4, label: 'Hard', detail: 'Where to look' },
+  { value: 5, label: 'Very hard', detail: 'A vague nudge' },
+  { value: 6, label: 'Expert', detail: 'Just the line, no text' },
+];
+const DEFAULT_DIFFICULTY = 3;
+
 let decorationType;
 let diagnostics;
 let hints = [];
@@ -34,11 +46,38 @@ function readHints() {
         uri: vscode.Uri.file(abs),
         start: h.line - 1,
         end: end - 1,
-        reason: typeof h.reason === 'string' ? h.reason : '',
+        tiers: tiersOf(h),
       });
     }
   }
   return result;
+}
+
+function tiersOf(h) {
+  if (Array.isArray(h.hints)) {
+    const tiers = h.hints.filter((t) => typeof t === 'string' && t.trim() !== '');
+    if (tiers.length > 0) return tiers;
+  }
+  return typeof h.reason === 'string' && h.reason.trim() !== '' ? [h.reason] : [];
+}
+
+function getDifficulty() {
+  const value = vscode.workspace.getConfiguration('claudeHints').get('difficulty', DEFAULT_DIFFICULTY);
+  return Number.isInteger(value) && value >= 1 && value <= DIFFICULTIES.length ? value : DEFAULT_DIFFICULTY;
+}
+
+function setDifficulty(value) {
+  return vscode.workspace.getConfiguration('claudeHints').update('difficulty', value, vscode.ConfigurationTarget.Global);
+}
+
+function textFor(hint) {
+  const difficulty = getDifficulty();
+  if (difficulty === DIFFICULTIES.length || hint.tiers.length === 0) return '';
+  // Scale rather than index, so hints written with fewer tiers still spread
+  // across the whole slider.
+  const help = (DIFFICULTIES.length - 1 - difficulty) / (DIFFICULTIES.length - 2);
+  const index = Math.round(help * (hint.tiers.length - 1));
+  return hint.tiers[index];
 }
 
 function clampRange(doc, hint) {
@@ -52,7 +91,7 @@ function applyToEditor(editor) {
   const mine = hints.filter((h) => h.uri.fsPath === editor.document.uri.fsPath);
   const options = mine.map((h) => ({
     range: clampRange(editor.document, h),
-    hoverMessage: new vscode.MarkdownString('**Claude:** ' + (h.reason || '(no reason given)')),
+    hoverMessage: new vscode.MarkdownString('**Claude:** ' + (textFor(h) || 'flagged this line')),
   }));
   editor.setDecorations(decorationType, options);
 }
@@ -68,7 +107,7 @@ function render() {
     const key = h.uri.toString();
     if (!byFile.has(key)) byFile.set(key, { uri: h.uri, items: [] });
     const range = new vscode.Range(h.start, 0, h.end, Number.MAX_SAFE_INTEGER);
-    const d = new vscode.Diagnostic(range, h.reason || 'Claude flagged this', vscode.DiagnosticSeverity.Information);
+    const d = new vscode.Diagnostic(range, textFor(h) || 'Claude flagged this', vscode.DiagnosticSeverity.Information);
     d.source = 'Claude';
     byFile.get(key).items.push(d);
   }
@@ -136,7 +175,7 @@ async function showList() {
   const picked = await vscode.window.showQuickPick(
     hints.map((h) => ({
       label: `${vscode.workspace.asRelativePath(h.uri)}:${h.start + 1}`,
-      description: h.reason,
+      description: textFor(h),
       hint: h,
     })),
     { placeHolder: 'Jump to a line Claude flagged' }
@@ -147,6 +186,87 @@ async function showList() {
   const range = clampRange(doc, picked.hint);
   editor.selection = new vscode.Selection(range.start, range.start);
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+}
+
+async function pickDifficulty() {
+  const current = getDifficulty();
+  const picked = await vscode.window.showQuickPick(
+    DIFFICULTIES.map((d) => ({
+      label: d.label,
+      description: d.value === current ? '(current)' : '',
+      detail: d.detail,
+      value: d.value,
+    })),
+    { placeHolder: 'How much should Claude\'s hints give away?' }
+  );
+  if (picked) await setDifficulty(picked.value);
+}
+
+class DifficultyView {
+  resolveWebviewView(view) {
+    this.view = view;
+    view.webview.options = { enableScripts: true };
+    view.webview.html = difficultyHtml(view.webview, getDifficulty());
+    view.webview.onDidReceiveMessage((message) => {
+      if (message && Number.isInteger(message.difficulty)) setDifficulty(message.difficulty);
+    });
+    view.onDidChangeVisibility(() => {
+      if (view.visible) this.sync();
+    });
+    view.onDidDispose(() => {
+      this.view = undefined;
+    });
+  }
+
+  sync() {
+    if (this.view) this.view.webview.postMessage({ difficulty: getDifficulty() });
+  }
+}
+
+function difficultyHtml(webview, difficulty) {
+  const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  const levels = JSON.stringify(DIFFICULTIES);
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<style>
+  body { padding: 8px 4px; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
+  label { display: block; margin-bottom: 6px; }
+  input[type=range] { width: 100%; accent-color: var(--vscode-focusBorder); }
+  .ticks { display: flex; justify-content: space-between; font-size: 0.85em; opacity: 0.8; }
+  .current { margin-top: 10px; font-weight: 600; }
+  .detail { margin-top: 2px; opacity: 0.8; }
+  .note { margin-top: 12px; font-size: 0.85em; opacity: 0.7; }
+</style>
+</head>
+<body>
+  <label for="difficulty">Hint difficulty</label>
+  <input id="difficulty" type="range" min="1" max="${DIFFICULTIES.length}" step="1" value="${difficulty}">
+  <div class="ticks"><span>${DIFFICULTIES[0].label}</span><span>${DIFFICULTIES[DIFFICULTIES.length - 1].label}</span></div>
+  <div class="current" id="current"></div>
+  <div class="detail" id="detail"></div>
+  <div class="note">Hints never include the solution. Ask Claude for it when you want it.</div>
+<script nonce="${nonce}">
+  const vscode = acquireVsCodeApi();
+  const levels = ${levels};
+  const slider = document.getElementById('difficulty');
+  function show(value) {
+    const level = levels.find((l) => l.value === value);
+    document.getElementById('current').textContent = level.label;
+    document.getElementById('detail').textContent = level.detail;
+  }
+  slider.addEventListener('input', () => show(Number(slider.value)));
+  slider.addEventListener('change', () => vscode.postMessage({ difficulty: Number(slider.value) }));
+  window.addEventListener('message', (event) => {
+    slider.value = event.data.difficulty;
+    show(event.data.difficulty);
+  });
+  show(${difficulty});
+</script>
+</body>
+</html>`;
 }
 
 function clearAll() {
@@ -171,12 +291,20 @@ function activate(context) {
     overviewRulerLane: vscode.OverviewRulerLane.Right,
   });
   diagnostics = vscode.languages.createDiagnosticCollection('claude-hints');
+  const difficultyView = new DifficultyView();
 
   context.subscriptions.push(
     decorationType,
     diagnostics,
     vscode.commands.registerCommand('claudeHints.list', showList),
     vscode.commands.registerCommand('claudeHints.clear', clearAll),
+    vscode.commands.registerCommand('claudeHints.setDifficulty', pickDifficulty),
+    vscode.window.registerWebviewViewProvider('claudeHints.difficultyView', difficultyView),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('claudeHints.difficulty')) return;
+      render();
+      difficultyView.sync();
+    }),
     vscode.window.onDidChangeVisibleTextEditors(render),
     vscode.workspace.onDidChangeTextDocument(shiftForEdit),
     vscode.workspace.onDidChangeWorkspaceFolders((e) => {

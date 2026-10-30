@@ -11,7 +11,32 @@
   "contributes": {
     "commands": [
       { "command": "claudeHints.list", "title": "Claude Hints: Show All Hints" },
-      { "command": "claudeHints.clear", "title": "Claude Hints: Clear All Hints" }
-    ]
+      { "command": "claudeHints.clear", "title": "Claude Hints: Clear All Hints" },
+      { "command": "claudeHints.setDifficulty", "title": "Claude Hints: Set Hint Difficulty" }
+    ],
+    "views": {
+      "explorer": [
+        { "type": "webview", "id": "claudeHints.difficultyView", "name": "Claude Hints" }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Hints",
+      "properties": {
+        "claudeHints.difficulty": {
+          "type": "integer",
+          "default": 3,
+          "enum": [1, 2, 3, 4, 5, 6],
+          "enumDescriptions": [
+            "Very easy: what is wrong and the direction of the fix",
+            "Easy: what is wrong and why",
+            "Medium: names the problem",
+            "Hard: where to look",
+            "Very hard: a vague nudge",
+            "Expert: just the line, no text"
+          ],
+          "description": "How much Claude's hints give away. Hints never include the solution."
+        }
+      }
+    }
   }
 }

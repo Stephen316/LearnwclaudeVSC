@@ -7,10 +7,23 @@
   JSON array, one entry per place to change:
 
   [
-    { "file": "src/main.py", "line": 42, "endLine": 45, "reason": "short why" }
+    {
+      "file": "src/main.py", "line": 42, "endLine": 45,
+      "hints": ["vague nudge", "where to look", "names the problem", "what is wrong and why", "direction of the fix"]
+    }
   ]
 
   - `file` is relative to the project root, `line`/`endLine` are 1-based (`endLine` optional).
+  - `hints` is always five strings, least help first. My difficulty slider picks which
+    one I see, so write all five every time, each clearly giving more than the last:
+    1. a vague nudge: a question to ask myself, without pointing at anything specific;
+    2. where to look: the part of the line or the value to check, without naming the bug;
+    3. names the problem or concept;
+    4. explains what is wrong and why it goes wrong;
+    5. the direction of the fix, still without the answer.
+  - Never put the solution in a hint: no corrected code, no exact replacement values.
   - Always overwrite the whole file, so old hints disappear. Use `[]` if there is nothing to flag.
   - After writing it, reply with one short sentence only, for example "Flagged 3 lines."
+- Only when I ask for the solution (for example "show me the solution" or "solve line 42"),
+  give it in chat. Still do not edit the file unless I say "apply it".
 - If I ask a general question, answer it normally in chat.
